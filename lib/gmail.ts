@@ -1,33 +1,21 @@
 import { google } from "googleapis";
+import { decode } from "he";
 
 /**
- * Gmail messages are structured in "parts" (this is the MIME format emails
- * use). A simple email might have one part; an email with both a plain-text
- * and HTML version (most do) will have nested parts. This function digs
- * through that structure to find the actual readable content, preferring
- * HTML (so links/formatting survive) and falling back to plain text.
+ * Recursively searches a Gmail message's MIME parts for one matching the
+ * given content type (e.g. "text/plain" or "text/html"), and returns its
+ * decoded text. Returns an empty string if that type isn't found.
  */
-function extractBody(payload: any): string {
+function getPartText(payload: any, mimeType: string): string {
   if (!payload) return "";
 
-  // Base case: this part IS body content — decode it from base64 and return it.
-  if (
-    payload.body?.data &&
-    (payload.mimeType === "text/html" || payload.mimeType === "text/plain")
-  ) {
+  if (payload.mimeType === mimeType && payload.body?.data) {
     return Buffer.from(payload.body.data, "base64url").toString("utf-8");
   }
 
-  // Recursive case: this part contains sub-parts, so look inside them.
   if (payload.parts) {
-    const htmlPart = payload.parts.find((p: any) => p.mimeType === "text/html");
-    if (htmlPart) return extractBody(htmlPart);
-
-    const textPart = payload.parts.find((p: any) => p.mimeType === "text/plain");
-    if (textPart) return extractBody(textPart);
-
     for (const part of payload.parts) {
-      const result = extractBody(part);
+      const result = getPartText(part, mimeType);
       if (result) return result;
     }
   }
@@ -35,16 +23,45 @@ function extractBody(payload: any): string {
   return "";
 }
 
+/**
+ * SAGA's email contains a full, self-contained HTML report pasted as text
+ * inside the message (meant for a human to copy into a .html file). This
+ * function finds that embedded report by looking for its start
+ * ("<!DOCTYPE html>") and end ("</html>") and extracts just that chunk.
+ *
+ * `escaped` should be true when searching the HTML version of the email
+ * (where < and > are converted to &lt; and &gt; so they display as visible
+ * text instead of being rendered) — in that case we also decode the escaped
+ * characters back to normal HTML afterward.
+ */
+function findEmbeddedHtmlDocument(text: string, escaped: boolean): string | null {
+  const startMarker = escaped ? /&lt;!doctype html/i : /<!doctype html/i;
+  const endMarker = escaped ? /&lt;\/html&gt;/i : /<\/html>/i;
+
+  const startMatch = startMarker.exec(text);
+  if (!startMatch) return null;
+
+  const remainder = text.slice(startMatch.index);
+  const endMatch = endMarker.exec(remainder);
+  if (!endMatch) return null;
+
+  const endIndex = endMatch.index + endMatch[0].length;
+  const raw = remainder.slice(0, endIndex);
+
+  return escaped ? decode(raw) : raw;
+}
+
 export type SagaReport = {
   id: string;
   subject: string;
   date: string;
-  body: string;
+  reportHtml: string | null;
 };
 
 /**
- * Connects to Gmail using your saved credentials and returns the most
- * recent email from the given sender address, or null if there isn't one.
+ * Connects to Gmail using your saved credentials, finds the most recent
+ * email from the given sender, and pulls out the full HTML report embedded
+ * inside it. Returns null if there's no email at all from that sender.
  */
 export async function getLatestSagaReport(
   senderEmail: string
@@ -54,14 +71,12 @@ export async function getLatestSagaReport(
     process.env.GMAIL_CLIENT_SECRET
   );
 
-  // The refresh token lets us get fresh access without you logging in again.
   oauth2Client.setCredentials({
     refresh_token: process.env.GMAIL_REFRESH_TOKEN,
   });
 
   const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
-  // Ask Gmail for the single most recent email from SAGA's address.
   const list = await gmail.users.messages.list({
     userId: "me",
     q: `from:${senderEmail}`,
@@ -71,7 +86,6 @@ export async function getLatestSagaReport(
   const messageId = list.data.messages?.[0]?.id;
   if (!messageId) return null;
 
-  // Fetch the full content of that email.
   const full = await gmail.users.messages.get({
     userId: "me",
     id: messageId,
@@ -83,7 +97,15 @@ export async function getLatestSagaReport(
     headers.find((h) => h.name === "Subject")?.value ?? "SAGA Report";
   const date =
     headers.find((h) => h.name === "Date")?.value ?? new Date().toString();
-  const body = extractBody(full.data.payload);
 
-  return { id: messageId, subject, date, body };
+  // Try the plain-text version of the email first — if the report is
+  // embedded there, it's usually already unescaped (no &lt; to decode).
+  const plainText = getPartText(full.data.payload, "text/plain");
+  const htmlText = getPartText(full.data.payload, "text/html");
+
+  const reportHtml =
+    findEmbeddedHtmlDocument(plainText, false) ??
+    findEmbeddedHtmlDocument(htmlText, true);
+
+  return { id: messageId, subject, date, reportHtml };
 }
