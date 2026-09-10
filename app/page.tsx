@@ -1,45 +1,29 @@
 import { Redis } from "@upstash/redis";
-import type { SagaReport } from "@/lib/gmail";
+import Link from "next/link";
 
 const redis = Redis.fromEnv();
-
 export const dynamic = "force-dynamic";
 
-export default async function Home() {
-  const report = await redis.get<SagaReport>("latest-report");
+type ReportIndexEntry = { id: string; subject: string; date: string };
 
-  if (!report) {
-    return (
-      <main style={{ padding: "2rem", fontFamily: "sans-serif" }}>
-        <h1>SAGA Reports</h1>
-        <p>No report has been received yet. Check back soon.</p>
-      </main>
-    );
-  }
-
-  if (!report.reportHtml) {
-    return (
-      <main style={{ padding: "2rem", fontFamily: "sans-serif" }}>
-        <h1>{report.subject}</h1>
-        <p style={{ color: "#666" }}>{report.date}</p>
-        <p>
-          Couldn&apos;t find the embedded report inside this email. Check the
-          original email in Gmail.
-        </p>
-      </main>
-    );
-  }
+export default async function ReportsArchive() {
+  const entries = await redis.lrange<ReportIndexEntry>("report-index", 0, -1);
 
   return (
-    <main style={{ width: "100%" }}>
-      <p style={{ padding: "1rem", margin: 0, color: "#666", fontFamily: "sans-serif" }}>
-        Latest report — {report.date}
-      </p>
-      <iframe
-        srcDoc={report.reportHtml}
-        style={{ width: "100%", minHeight: "100vh", border: "none", display: "block" }}
-        title={report.subject}
-      />
+    <main style={{ padding: "2rem", fontFamily: "sans-serif", maxWidth: 800, margin: "0 auto" }}>
+      <h1>Past Reports</h1>
+      {(!entries || entries.length === 0) && <p>No reports yet.</p>}
+      <ul style={{ listStyle: "none", padding: 0 }}>
+        {entries?.map((entry) => (
+          <li key={entry.id} style={{ padding: "0.75rem 0", borderBottom: "1px solid #eee" }}>
+            <Link href={`/reports/${entry.id}`} style={{ fontWeight: 600 }}>
+              {entry.subject}
+            </Link>
+            <div style={{ color: "#666", fontSize: "0.9rem" }}>{entry.date}</div>
+          </li>
+        ))}
+      </ul>
     </main>
   );
 }
+
