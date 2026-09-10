@@ -31,15 +31,13 @@ export default async function Home() {
   }
 
   return (
-    <main style={{ maxWidth: 1000, margin: "0 auto" }}>
-      <p style={{ padding: "1rem 1rem 0", color: "#666", fontFamily: "sans-serif" }}>
+    <main style={{ width: "100%" }}>
+      <p style={{ padding: "1rem", margin: 0, color: "#666", fontFamily: "sans-serif" }}>
         Latest report — {report.date}
       </p>
-      {/* The iframe fully isolates SAGA's own HTML, CSS, and scripts from
-          this page, so its layout and animations render exactly as designed. */}
       <iframe
         srcDoc={report.reportHtml}
-        style={{ width: "100%", minHeight: "1400px", border: "none" }}
+        style={{ width: "100%", minHeight: "100vh", border: "none", display: "block" }}
         title={report.subject}
       />
     </main>

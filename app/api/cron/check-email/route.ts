@@ -16,31 +16,17 @@ export async function GET(request: Request) {
     return NextResponse.json({ message: "No report found in the inbox yet." });
   }
 
-  // TEMPORARY: duplicate-check disabled while we fix extraction logic on
-  // the same test email. Re-enable this once confirmed working (see the
-  // commented block below) by deleting these two lines and uncommenting it.
+  const lastStoredId = await redis.get<string>("latest-report-id");
+  if (lastStoredId === report.id) {
+    return NextResponse.json({ message: "No new report since last check." });
+  }
 
   await redis.set("latest-report", report);
   await redis.set("latest-report-id", report.id);
 
   return NextResponse.json({
-    message: "Report re-processed and saved.",
+    message: "New report saved.",
     subject: report.subject,
     foundReportHtml: report.reportHtml !== null,
   });
-
-  // --- Normal duplicate-check version (restore this after testing) ---
-  // const lastStoredId = await redis.get<string>("latest-report-id");
-  // if (lastStoredId === report.id) {
-  //   return NextResponse.json({ message: "No new report since last check." });
-  // }
-  //
-  // await redis.set("latest-report", report);
-  // await redis.set("latest-report-id", report.id);
-  //
-  // return NextResponse.json({
-  //   message: "New report saved.",
-  //   subject: report.subject,
-  //   foundReportHtml: report.reportHtml !== null,
-  // });
 }
