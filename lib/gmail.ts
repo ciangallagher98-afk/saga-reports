@@ -24,19 +24,14 @@ function getPartText(payload: any, mimeType: string): string {
 }
 
 /**
- * SAGA's email contains a full, self-contained HTML report pasted as text
- * inside the message (meant for a human to copy into a .html file). This
- * function finds that embedded report by looking for its start
- * ("<!DOCTYPE html>") and end ("</html>") and extracts just that chunk.
- *
- * `escaped` should be true when searching the HTML version of the email
- * (where < and > are converted to &lt; and &gt; so they display as visible
- * text instead of being rendered) — in that case we also decode the escaped
- * characters back to normal HTML afterward.
+ * SAGA embeds the full report as HTML-escaped text (so &lt; instead of <)
+ * inside the email, meant for a human to copy into a .html file. This finds
+ * that embedded block by its escaped start ("&lt;!doctype html") and end
+ * ("&lt;/html&gt;"), then decodes the escaping to get back real HTML.
  */
-function findEmbeddedHtmlDocument(text: string, escaped: boolean): string | null {
-  const startMarker = escaped ? /&lt;!doctype html/i : /<!doctype html/i;
-  const endMarker = escaped ? /&lt;\/html&gt;/i : /<\/html>/i;
+function findEmbeddedHtmlDocument(text: string): string | null {
+  const startMarker = /&lt;!doctype html/i;
+  const endMarker = /&lt;\/html&gt;/i;
 
   const startMatch = startMarker.exec(text);
   if (!startMatch) return null;
@@ -48,7 +43,7 @@ function findEmbeddedHtmlDocument(text: string, escaped: boolean): string | null
   const endIndex = endMatch.index + endMatch[0].length;
   const raw = remainder.slice(0, endIndex);
 
-  return escaped ? decode(raw) : raw;
+  return decode(raw);
 }
 
 export type SagaReport = {
@@ -98,14 +93,14 @@ export async function getLatestSagaReport(
   const date =
     headers.find((h) => h.name === "Date")?.value ?? new Date().toString();
 
-  // Try the plain-text version of the email first — if the report is
-  // embedded there, it's usually already unescaped (no &lt; to decode).
+  // The plain-text version is clean (no syntax-highlighting tags breaking
+  // up the code), so check it first. Fall back to the HTML version only if
+  // the plain-text part is missing or doesn't contain the embedded report.
   const plainText = getPartText(full.data.payload, "text/plain");
   const htmlText = getPartText(full.data.payload, "text/html");
 
   const reportHtml =
-    findEmbeddedHtmlDocument(plainText, false) ??
-    findEmbeddedHtmlDocument(htmlText, true);
+    findEmbeddedHtmlDocument(plainText) ?? findEmbeddedHtmlDocument(htmlText);
 
   return { id: messageId, subject, date, reportHtml };
 }
