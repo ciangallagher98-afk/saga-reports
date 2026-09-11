@@ -78,3 +78,18 @@ export async function getLatestSagaReport(
   const full = await gmail.users.messages.get({
     userId: "me",
     id: messageId,
+    format: "full",
+  });
+
+  const headers = full.data.payload?.headers ?? [];
+  const subject = headers.find((h) => h.name === "Subject")?.value ?? "SAGA Report";
+  const date = headers.find((h) => h.name === "Date")?.value ?? new Date().toString();
+
+  const plainText = getPartText(full.data.payload, "text/plain");
+  const htmlText = getPartText(full.data.payload, "text/html");
+
+  const reportHtml =
+    findEmbeddedHtmlDocument(plainText) ?? findEmbeddedHtmlDocument(htmlText);
+
+  return { id: messageId, subject, date, reportHtml };
+}
